@@ -251,6 +251,7 @@ h1 {
 # ── Sound JS ──────────────────────────────────────────────────────────────────
 
 BUZZ_SOUND_JS = """
+// Default buzzer
 function playBuzz() {
     var AC = window.AudioContext || window.webkitAudioContext;
     if (!AC) return;
@@ -267,7 +268,119 @@ function playBuzz() {
     osc.start(ctx.currentTime);
     osc.stop(ctx.currentTime + 0.4);
 }
+
+// Duck quack: sawtooth through a bandpass filter that sweeps high→low ("wah")
+function playDuck() {
+    var AC = window.AudioContext || window.webkitAudioContext;
+    if (!AC) return;
+    var ctx = new AC();
+    var t = ctx.currentTime;
+    var osc = ctx.createOscillator();
+    var filter = ctx.createBiquadFilter();
+    var gain = ctx.createGain();
+    osc.type = 'sawtooth';
+    osc.frequency.setValueAtTime(370, t);
+    osc.frequency.linearRampToValueAtTime(330, t + 0.20);
+    filter.type = 'bandpass';
+    filter.Q.value = 5;
+    filter.frequency.setValueAtTime(1900, t);
+    filter.frequency.exponentialRampToValueAtTime(580, t + 0.13);
+    filter.frequency.exponentialRampToValueAtTime(850, t + 0.22);
+    gain.gain.setValueAtTime(0, t);
+    gain.gain.linearRampToValueAtTime(0.55, t + 0.015);
+    gain.gain.setValueAtTime(0.55, t + 0.16);
+    gain.gain.exponentialRampToValueAtTime(0.001, t + 0.24);
+    osc.connect(filter);
+    filter.connect(gain);
+    gain.connect(ctx.destination);
+    osc.start(t);
+    osc.stop(t + 0.27);
+}
+
+// Frog ribbit: two short square-wave chirps ("rib" + "bit"), each falling in pitch
+function playFrog() {
+    var AC = window.AudioContext || window.webkitAudioContext;
+    if (!AC) return;
+    var ctx = new AC();
+    var t = ctx.currentTime;
+    function chirp(st, freq, dur, amp) {
+        var osc = ctx.createOscillator();
+        var gain = ctx.createGain();
+        osc.type = 'square';
+        osc.frequency.setValueAtTime(freq, st);
+        osc.frequency.exponentialRampToValueAtTime(freq * 0.82, st + dur);
+        gain.gain.setValueAtTime(0, st);
+        gain.gain.linearRampToValueAtTime(amp, st + 0.01);
+        gain.gain.setValueAtTime(amp, st + dur * 0.7);
+        gain.gain.exponentialRampToValueAtTime(0.001, st + dur + 0.03);
+        osc.connect(gain);
+        gain.connect(ctx.destination);
+        osc.start(st);
+        osc.stop(st + dur + 0.05);
+    }
+    chirp(t + 0.00, 900, 0.08, 0.30);  // "rib"
+    chirp(t + 0.13, 680, 0.13, 0.35);  // "bit"
+}
+
+// Cow moo: low sawtooth ~150 Hz with slow pitch arc and vibrato
+function playCow() {
+    var AC = window.AudioContext || window.webkitAudioContext;
+    if (!AC) return;
+    var ctx = new AC();
+    var t = ctx.currentTime;
+    var osc = ctx.createOscillator();
+    var vibrato = ctx.createOscillator();
+    var vibratoGain = ctx.createGain();
+    var gain = ctx.createGain();
+    osc.type = 'sawtooth';
+    osc.frequency.setValueAtTime(145, t);
+    osc.frequency.linearRampToValueAtTime(165, t + 0.12);
+    osc.frequency.setValueAtTime(165, t + 0.35);
+    osc.frequency.linearRampToValueAtTime(135, t + 0.80);
+    vibrato.type = 'sine';
+    vibrato.frequency.value = 5;
+    vibratoGain.gain.value = 7;
+    vibrato.connect(vibratoGain);
+    vibratoGain.connect(osc.frequency);
+    gain.gain.setValueAtTime(0, t);
+    gain.gain.linearRampToValueAtTime(0.40, t + 0.09);
+    gain.gain.setValueAtTime(0.40, t + 0.60);
+    gain.gain.exponentialRampToValueAtTime(0.001, t + 0.88);
+    osc.connect(gain);
+    gain.connect(ctx.destination);
+    vibrato.start(t); osc.start(t);
+    vibrato.stop(t + 0.92); osc.stop(t + 0.92);
+}
+
+// Horn: two sawtooth oscillators (classic klaxon chord)
+function playHorn() {
+    var AC = window.AudioContext || window.webkitAudioContext;
+    if (!AC) return;
+    var ctx = new AC();
+    var master = ctx.createGain();
+    master.connect(ctx.destination);
+    master.gain.setValueAtTime(0, ctx.currentTime);
+    master.gain.linearRampToValueAtTime(0.35, ctx.currentTime + 0.02);
+    master.gain.setValueAtTime(0.35, ctx.currentTime + 0.45);
+    master.gain.exponentialRampToValueAtTime(0.001, ctx.currentTime + 0.6);
+    [466, 349].forEach(function(freq) {   // Bb4 + F4
+        var osc = ctx.createOscillator();
+        osc.type = 'sawtooth';
+        osc.frequency.value = freq;
+        osc.connect(master);
+        osc.start(ctx.currentTime);
+        osc.stop(ctx.currentTime + 0.65);
+    });
+}
 """
+
+# Maps user position → sound function name
+_SOUND_FNS = ["playCow", "playHorn", "playDuck", "playFrog", "playBuzz"]
+
+def get_sound_fn(name: str) -> str:
+    if name not in state.users:
+        return "playBuzz"
+    return _SOUND_FNS[min(state.users.index(name), len(_SOUND_FNS) - 1)]
 
 # ── Admin components ──────────────────────────────────────────────────────────
 
@@ -374,7 +487,7 @@ def buzzer_ui(name: str):
                    hx_post=f"/buzz/{name}",
                    hx_target="#buzzer-ui",
                    hx_swap="outerHTML",
-                   onclick="playBuzz()"),
+                   onclick=f"{get_sound_fn(name)}()"),
             P("Round is LIVE — HIT IT!", cls="buzz-msg live"),
             id="buzzer-ui",
             hx_get=f"/user/{name}/status",
