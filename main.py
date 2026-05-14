@@ -13,9 +13,13 @@ class GameState:
         self.users: list[str] = []
         self.buzzes: list[tuple[str, float]] = []  # (name, timestamp)
         self.game_active: bool = False
+        self.points: dict[str, int] = {}
 
     def setup(self, names: list[str]):
-        self.users = [n.strip() for n in names if n.strip()][:5]
+        new_users = [n.strip() for n in names if n.strip()][:5]
+        # Preserve points for players whose names are kept
+        self.points = {name: self.points.get(name, 0) for name in new_users}
+        self.users = new_users
         self.buzzes = []
         self.game_active = False
 
@@ -34,6 +38,10 @@ class GameState:
             return False
         self.buzzes.append((name, time.time()))
         return True
+
+    def adjust_points(self, name: str, delta: int):
+        if name in self.users:
+            self.points[name] = max(0, self.points.get(name, 0) + delta)
 
 
 state = GameState()
@@ -167,6 +175,38 @@ input[type="text"]:focus { border-color: var(--red); }
 .rank-3 td { color: var(--bronze); }
 .pending td { color: #33334a; }
 .muted { color: var(--muted); font-size: 0.9rem; }
+.td-pts { text-align: right; font-variant-numeric: tabular-nums; font-weight: 600; }
+/* Points section */
+.pts-row {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    padding: 0.65rem 0;
+    border-bottom: 1px solid var(--border);
+}
+.pts-row:last-child { border-bottom: none; }
+.pts-name { font-weight: 600; font-size: 0.95rem; flex: 1; }
+.pts-controls { display: flex; align-items: center; gap: 0.5rem; }
+.pts-value { font-size: 1.5rem; font-weight: 700; min-width: 2.2rem; text-align: right; font-variant-numeric: tabular-nums; }
+.pts-label { font-size: 0.7rem; color: var(--muted); margin-right: 0.4rem; align-self: flex-end; padding-bottom: 0.2rem; }
+.btn-pts {
+    width: 44px;
+    height: 44px;
+    border-radius: 8px;
+    border: none;
+    font-size: 1.4rem;
+    font-weight: 700;
+    cursor: pointer;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    line-height: 1;
+    transition: opacity 0.15s, transform 0.1s;
+}
+.btn-pts:active { transform: scale(0.93); }
+.btn-inc { background: var(--green); color: #000; }
+.btn-dec { background: var(--border); color: var(--text); }
+.btn-pts:hover { opacity: 0.85; }
 """
 
 USER_CSS = """
@@ -396,16 +436,18 @@ def leaderboard_div():
             medals = ("🥇", "🥈", "🥉")
             medal = medals[i] if i < 3 else f"#{i + 1}"
             delay = "WINNER" if i == 0 else f"+{ts - state.buzzes[0][1]:.3f}s"
-            rows.append(Tr(Td(medal), Td(name), Td(delay), cls=f"rank-{i + 1}"))
+            pts = state.points.get(name, 0)
+            rows.append(Tr(Td(medal), Td(name), Td(str(pts), cls="td-pts"), Td(delay), cls=f"rank-{i + 1}"))
 
         pending = [u for u in state.users if not any(b[0] == u for b in state.buzzes)]
         for name in pending:
-            rows.append(Tr(Td("—"), Td(name), Td("—"), cls="pending"))
+            pts = state.points.get(name, 0)
+            rows.append(Tr(Td("—"), Td(name), Td(str(pts), cls="td-pts"), Td("—"), cls="pending"))
 
         inner = Div(
             Span(status_txt, cls=f"badge {status_cls}"),
             Table(
-                Thead(Tr(Th(""), Th("Player"), Th("Time"))),
+                Thead(Tr(Th(""), Th("Player"), Th("Pts"), Th("Time"))),
                 Tbody(*rows),
                 cls="lb-table",
             ),
@@ -418,6 +460,41 @@ def leaderboard_div():
         hx_get="/admin/leaderboard",
         hx_trigger="every 1s",
         hx_swap="outerHTML",
+        cls="card",
+    )
+
+
+def points_div():
+    if not state.users:
+        return Div(id="points-section")
+
+    rows = [
+        Div(
+            Span(name, cls="pts-name"),
+            Div(
+                Span(str(state.points.get(name, 0)), cls="pts-value"),
+                Span("pts", cls="pts-label"),
+                Button("−",
+                       hx_post=f"/admin/points/{name}/dec",
+                       hx_target="#points-section",
+                       hx_swap="outerHTML",
+                       cls="btn-pts btn-dec"),
+                Button("+",
+                       hx_post=f"/admin/points/{name}/inc",
+                       hx_target="#points-section",
+                       hx_swap="outerHTML",
+                       cls="btn-pts btn-inc"),
+                cls="pts-controls",
+            ),
+            cls="pts-row",
+        )
+        for name in state.users
+    ]
+
+    return Div(
+        H2("Points"),
+        *rows,
+        id="points-section",
         cls="card",
     )
 
@@ -450,6 +527,7 @@ def game_section(base_url: str = ""):
             cls="controls",
         ),
         leaderboard_div(),
+        points_div(),
         id="game-section",
     )
 
@@ -621,6 +699,18 @@ def get(name: str):
 def post(name: str):
     state.buzz(name)
     return buzzer_ui(name)
+
+
+@rt("/admin/points/{name}/inc")
+def post(name: str):
+    state.adjust_points(name, 1)
+    return points_div()
+
+
+@rt("/admin/points/{name}/dec")
+def post(name: str):
+    state.adjust_points(name, -1)
+    return points_div()
 
 
 # ── Entry point ───────────────────────────────────────────────────────────────
