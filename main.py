@@ -467,10 +467,43 @@ function playHorn() {
         osc.stop(ctx.currentTime + 0.65);
     });
 }
+
+// Ahooga horn: vintage "ah→ooga" pitch slide with vibrato wobble
+function playHorn2() {
+    var AC = window.AudioContext || window.webkitAudioContext;
+    if (!AC) return;
+    var ctx = new AC();
+    var t = ctx.currentTime;
+    var osc = ctx.createOscillator();
+    var vibrato = ctx.createOscillator();
+    var vibratoGain = ctx.createGain();
+    var gain = ctx.createGain();
+    osc.type = 'sawtooth';
+    // "Ah": sharp onset at 700 Hz, slides down to "ooga" at ~380 Hz
+    osc.frequency.setValueAtTime(700, t);
+    osc.frequency.exponentialRampToValueAtTime(385, t + 0.18);
+    osc.frequency.setValueAtTime(385, t + 0.20);
+    osc.frequency.linearRampToValueAtTime(365, t + 0.62);
+    // Vibrato ramps in during the "ooga" to give it a wobbling quality
+    vibrato.type = 'sine';
+    vibrato.frequency.value = 8;
+    vibratoGain.gain.setValueAtTime(0, t);
+    vibratoGain.gain.linearRampToValueAtTime(16, t + 0.28);
+    vibrato.connect(vibratoGain);
+    vibratoGain.connect(osc.frequency);
+    gain.gain.setValueAtTime(0, t);
+    gain.gain.linearRampToValueAtTime(0.44, t + 0.02);
+    gain.gain.setValueAtTime(0.44, t + 0.50);
+    gain.gain.exponentialRampToValueAtTime(0.001, t + 0.68);
+    osc.connect(gain);
+    gain.connect(ctx.destination);
+    vibrato.start(t); osc.start(t);
+    vibrato.stop(t + 0.72); osc.stop(t + 0.72);
+}
 """
 
 # Maps user position → sound function name
-_SOUND_FNS = ["playCow", "playHorn", "playDuck", "playFrog", "playBuzz"]
+_SOUND_FNS = ["playHorn", "playHorn2", "playDuck", "playFrog", "playCow"]
 
 def get_sound_fn(name: str) -> str:
     if name not in state.users:
