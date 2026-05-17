@@ -14,6 +14,7 @@ class GameState:
         self.buzzes: list[tuple[str, float]] = []  # (name, timestamp)
         self.game_active: bool = False
         self.points: dict[str, int] = {}
+        self.answers: dict[str, str] = {}
 
     def setup(self, names: list[str]):
         new_users = [n.strip() for n in names if n.strip()][:5]
@@ -21,11 +22,17 @@ class GameState:
         self.points = {name: self.points.get(name, 0) for name in new_users}
         self.users = new_users
         self.buzzes = []
+        self.answers = {}
         self.game_active = False
 
     def start(self):
         self.buzzes = []
+        self.answers = {}
         self.game_active = True
+
+    def submit_answer(self, name: str, answer: str):
+        if name in self.users:
+            self.answers[name] = answer.strip()[:200]
 
     def reset(self):
         self.buzzes = []
@@ -176,6 +183,7 @@ input[type="text"]:focus { border-color: var(--red); }
 .pending td { color: #33334a; }
 .muted { color: var(--muted); font-size: 0.9rem; }
 .td-pts { text-align: right; font-variant-numeric: tabular-nums; font-weight: 600; }
+.lb-answer { font-size: 0.72rem; color: var(--green); margin-top: 0.12rem; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; max-width: 160px; }
 /* Points section */
 .pts-row {
     display: flex;
@@ -286,6 +294,53 @@ h1 {
 .buzz-msg.live { color: #00e090; font-weight: 700; letter-spacing: 0.05em; }
 .buzz-msg.gold { color: #ffd700; font-size: 1.1rem; font-weight: 700; }
 .error { color: #e04444; }
+.answer-section {
+    width: 100%;
+    max-width: 340px;
+    display: flex;
+    flex-direction: column;
+    gap: 0.55rem;
+    border-top: 1px solid #2a2a4a;
+    padding-top: 1.25rem;
+}
+.answer-label {
+    font-size: 0.72rem;
+    letter-spacing: 0.1em;
+    text-transform: uppercase;
+    color: #8888aa;
+}
+.answer-form { display: flex; gap: 0.5rem; }
+.answer-input {
+    flex: 1;
+    min-width: 0;
+    background: #0f0f1a;
+    border: 1px solid #2a2a4a;
+    border-radius: 8px;
+    color: #e0e0f0;
+    padding: 0 0.85rem;
+    font-size: 1rem;
+    outline: none;
+    height: 44px;
+    transition: border-color 0.15s;
+}
+.answer-input:focus { border-color: #e04444; }
+.answer-submit {
+    flex-shrink: 0;
+    background: #e04444;
+    color: #fff;
+    border: none;
+    border-radius: 8px;
+    font-size: 0.8rem;
+    font-weight: 700;
+    letter-spacing: 0.07em;
+    text-transform: uppercase;
+    padding: 0 1rem;
+    height: 44px;
+    cursor: pointer;
+    transition: opacity 0.15s, transform 0.1s;
+}
+.answer-submit:active { opacity: 0.8; transform: scale(0.97); }
+.answer-saved { font-size: 0.82rem; color: #00c878; }
 """
 
 # ── Sound JS ──────────────────────────────────────────────────────────────────
@@ -437,12 +492,16 @@ def leaderboard_div():
             medal = medals[i] if i < 3 else f"#{i + 1}"
             delay = "WINNER" if i == 0 else f"+{ts - state.buzzes[0][1]:.3f}s"
             pts = state.points.get(name, 0)
-            rows.append(Tr(Td(medal), Td(name), Td(str(pts), cls="td-pts"), Td(delay), cls=f"rank-{i + 1}"))
+            answer = state.answers.get(name, "")
+            name_cell = Td(name, Div(f'"{answer}"', cls="lb-answer") if answer else "")
+            rows.append(Tr(Td(medal), name_cell, Td(str(pts), cls="td-pts"), Td(delay), cls=f"rank-{i + 1}"))
 
         pending = [u for u in state.users if not any(b[0] == u for b in state.buzzes)]
         for name in pending:
             pts = state.points.get(name, 0)
-            rows.append(Tr(Td("—"), Td(name), Td(str(pts), cls="td-pts"), Td("—"), cls="pending"))
+            answer = state.answers.get(name, "")
+            name_cell = Td(name, Div(f'"{answer}"', cls="lb-answer") if answer else "")
+            rows.append(Tr(Td("—"), name_cell, Td(str(pts), cls="td-pts"), Td("—"), cls="pending"))
 
         inner = Div(
             Span(status_txt, cls=f"badge {status_cls}"),
@@ -533,6 +592,35 @@ def game_section(base_url: str = ""):
 
 
 # ── User components ───────────────────────────────────────────────────────────
+
+def answer_ui(name: str):
+    if name not in state.users:
+        return Div(id="answer-ui")
+
+    current = state.answers.get(name, "")
+    parts = [
+        P("Your Answer (optional)", cls="answer-label"),
+        Form(
+            Input(
+                type="text", name="answer", value=current,
+                placeholder="Type your answer…", maxlength=200,
+                cls="answer-input", autocomplete="off",
+            ),
+            Button("Submit", type="submit", cls="answer-submit"),
+            hx_post=f"/user/{name}/answer",
+            hx_target="#answer-ui",
+            hx_swap="outerHTML",
+            cls="answer-form",
+        ),
+    ]
+    if current:
+        parts.append(P(f'Saved: "{current}"', cls="answer-saved"))
+
+    return Div(
+        *parts,
+        id="answer-ui",
+        cls="answer-section",
+    )
 
 def buzzer_ui(name: str):
     if name not in state.users:
@@ -685,6 +773,7 @@ def get(name: str):
             Main(
                 H1(name),
                 buzzer_ui(name),
+                answer_ui(name),
             )
         ),
     )
@@ -693,6 +782,13 @@ def get(name: str):
 @rt("/user/{name}/status")
 def get(name: str):
     return buzzer_ui(name)
+
+
+@rt("/user/{name}/answer")
+async def post(name: str, req):
+    form = await req.form()
+    state.submit_answer(name, form.get("answer", ""))
+    return answer_ui(name)
 
 
 @rt("/buzz/{name}")
